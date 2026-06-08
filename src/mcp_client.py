@@ -1,56 +1,59 @@
 import logging
 import os
 import re
-import html
 from datetime import datetime
 from typing import List, Dict, Optional
 
-import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# ──────────────────────────────────────────────────────────────────────────────
+# JobSpy import — installed via: pip install python-jobspy
+# ──────────────────────────────────────────────────────────────────────────────
+try:
+    from jobspy import scrape_jobs
+    _JOBSPY_AVAILABLE = True
+except ImportError:
+    _JOBSPY_AVAILABLE = False
+    logging.warning(
+        "python-jobspy is not installed. "
+        "Run: pip install python-jobspy   to enable job searching."
+    )
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Country detection helper for Adzuna (country-segmented endpoint)
+# Optional Adzuna fallback (premium, requires free API keys)
 # ──────────────────────────────────────────────────────────────────────────────
+try:
+    import requests as _requests
+    _REQUESTS_AVAILABLE = True
+except ImportError:
+    _REQUESTS_AVAILABLE = False
+
+_REMOTE_KEYWORDS = {"remote", "anywhere", "worldwide", "global", "", "work from home", "wfh"}
+
+# Adzuna country detection map
 _COUNTRY_MAP: Dict[str, str] = {
-    # United Kingdom
     "uk": "gb", "united kingdom": "gb", "great britain": "gb",
-    "london": "gb", "manchester": "gb", "birmingham": "gb", "glasgow": "gb",
-    "edinburgh": "gb", "bristol": "gb", "leeds": "gb",
-    # India
+    "london": "gb", "manchester": "gb", "birmingham": "gb",
     "india": "in", "bangalore": "in", "bengaluru": "in", "mumbai": "in",
     "delhi": "in", "new delhi": "in", "hyderabad": "in", "pune": "in",
     "chennai": "in", "kolkata": "in", "noida": "in", "gurgaon": "in",
-    # Canada
     "canada": "ca", "toronto": "ca", "vancouver": "ca", "montreal": "ca",
-    "calgary": "ca", "ottawa": "ca", "edmonton": "ca",
-    # Australia
     "australia": "au", "sydney": "au", "melbourne": "au", "brisbane": "au",
-    "perth": "au", "adelaide": "au",
-    # Germany
     "germany": "de", "berlin": "de", "munich": "de", "hamburg": "de",
-    "frankfurt": "de", "cologne": "de", "stuttgart": "de",
-    # France
-    "france": "fr", "paris": "fr", "lyon": "fr", "marseille": "fr",
-    # Netherlands
-    "netherlands": "nl", "amsterdam": "nl", "rotterdam": "nl",
-    # Other
+    "france": "fr", "paris": "fr",
+    "netherlands": "nl", "amsterdam": "nl",
     "singapore": "sg",
     "new zealand": "nz",
-    "south africa": "za",
     "poland": "pl", "warsaw": "pl",
-    "brazil": "br", "sao paulo": "br",
+    "brazil": "br",
     "austria": "at", "vienna": "at",
-    "belgium": "be", "brussels": "be",
+    "belgium": "be",
     "mexico": "mx",
     "italy": "it", "rome": "it", "milan": "it",
     "spain": "es", "madrid": "es", "barcelona": "es",
-    "russia": "ru", "moscow": "ru",
 }
-
-_REMOTE_KEYWORDS = {"remote", "anywhere", "worldwide", "global", "", "work from home", "wfh"}
 
 
 def _detect_adzuna_country(location: Optional[str]) -> str:
@@ -64,52 +67,79 @@ def _detect_adzuna_country(location: Optional[str]) -> str:
 
 
 def _strip_html(text: str) -> str:
-    """Strips HTML tags from a string and decodes HTML entities."""
+    import html
     clean = re.sub(r"<[^>]+>", " ", text or "")
     clean = html.unescape(clean)
     return re.sub(r"\s+", " ", clean).strip()
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# MCPClient
+# ──────────────────────────────────────────────────────────────────────────────
 class MCPClient:
     """
     Multi-source real job search aggregator.
 
-    Sources (in priority order):
-    1. Adzuna        — Requires free account at https://developer.adzuna.com/
-                       Set ADZUNA_APP_ID + ADZUNA_APP_KEY in .env
-                       25 req/min · 250 req/day free tier
-    2. RemoteOK      — Completely free, no auth. Remote jobs only.
-                       Endpoint: https://remoteok.com/api
-    3. Arbeitnow     — Completely free, no auth. EU + Remote jobs.
-                       Endpoint: https://www.arbeitnow.com/api/job-board-api
+    Primary source  — python-jobspy (Indeed, LinkedIn, Glassdoor, ZipRecruiter,
+                      Google Jobs). No API keys required.
+                      Install: pip install python-jobspy
 
-    Results from all sources are normalised to the same dict schema and
-    de-duplicated by job URL before being returned.
+    Fallback source — Adzuna REST API (optional, better for non-US/EU locations).
+                      Requires free keys from https://developer.adzuna.com/
+                      Set ADZUNA_APP_ID + ADZUNA_APP_KEY in your .env file.
+
+    Configuration via .env:
+        ADZUNA_APP_ID   = your_id_here
+        ADZUNA_APP_KEY  = your_key_here
+        JOBSPY_SITES    = indeed,linkedin,glassdoor,zip_recruiter,google
+                          (comma-separated; defaults to all five)
+        JOBSPY_HOURS_OLD = 72   (only return jobs posted within N hours)
     """
+
+    # Default sites to search — can be overridden in .env
+    _DEFAULT_SITES = ["indeed", "linkedin", "glassdoor", "zip_recruiter", "google"]
 
     def __init__(self):
         self.adzuna_app_id  = os.getenv("ADZUNA_APP_ID", "").strip()
         self.adzuna_app_key = os.getenv("ADZUNA_APP_KEY", "").strip()
 
-        self._http = requests.Session()
-        self._http.headers.update({
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept": "application/json",
-        })
+        sites_env = os.getenv("JOBSPY_SITES", "").strip()
+        self._sites = [s.strip() for s in sites_env.split(",") if s.strip()] \
+                      if sites_env else self._DEFAULT_SITES
 
+        try:
+            self._hours_old = int(os.getenv("JOBSPY_HOURS_OLD", "72"))
+        except ValueError:
+            self._hours_old = 72
+
+        if _REQUESTS_AVAILABLE:
+            self._http = _requests.Session()
+            self._http.headers.update({
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+                "Accept": "application/json",
+            })
+
+        # Log active config
         sources = []
+        if _JOBSPY_AVAILABLE:
+            sources.append(f"JobSpy({', '.join(self._sites)})")
         if self.adzuna_app_id and self.adzuna_app_key:
             sources.append("Adzuna")
-        sources += ["RemoteOK", "Arbeitnow"]
-        logging.info(f"MCPClient ready. Active sources: {', '.join(sources)}")
+        if not sources:
+            logging.warning(
+                "MCPClient: No job sources available! "
+                "Run 'pip install python-jobspy' to enable searching."
+            )
+        else:
+            logging.info(f"MCPClient ready. Sources: {', '.join(sources)}")
 
-    # ──────────────────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────────────────
     # Public API
-    # ──────────────────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────────────────
     def search_jobs(
         self,
         keywords: str,
@@ -128,39 +158,27 @@ class MCPClient:
             f"location='{location}' | limit={limit}"
         )
 
-        is_remote = (location or "").lower().strip() in _REMOTE_KEYWORDS
         results: List[Dict] = []
 
-        # ── 1. Adzuna (best quality, location-aware) ─────────────────────
-        if self.adzuna_app_id and self.adzuna_app_key:
+        # ── 1. JobSpy (primary, no-key) ────────────────────────────────────
+        if _JOBSPY_AVAILABLE:
             try:
-                batch = self._search_adzuna(keywords, location, limit)
+                batch = self._search_jobspy(keywords, location, limit)
+                results.extend(batch)
+                logging.info(f"JobSpy → {len(batch)} job(s).")
+            except Exception as exc:
+                logging.warning(f"JobSpy search failed: {exc}")
+
+        # ── 2. Adzuna (optional fallback with API key) ─────────────────────
+        if len(results) < limit and self.adzuna_app_id and self.adzuna_app_key and _REQUESTS_AVAILABLE:
+            try:
+                batch = self._search_adzuna(keywords, location, limit - len(results))
                 results.extend(batch)
                 logging.info(f"Adzuna → {len(batch)} job(s).")
             except Exception as exc:
                 logging.warning(f"Adzuna search failed: {exc}")
 
-        # ── 2. RemoteOK (free, remote-only) ─────────────────────────────
-        if len(results) < limit and is_remote:
-            try:
-                batch = self._search_remoteok(keywords, limit - len(results))
-                results.extend(batch)
-                logging.info(f"RemoteOK → {len(batch)} job(s).")
-            except Exception as exc:
-                logging.warning(f"RemoteOK search failed: {exc}")
-
-        # ── 3. Arbeitnow (free, EU + remote) ────────────────────────────
-        if len(results) < limit:
-            try:
-                batch = self._search_arbeitnow(
-                    keywords, location, limit - len(results)
-                )
-                results.extend(batch)
-                logging.info(f"Arbeitnow → {len(batch)} job(s).")
-            except Exception as exc:
-                logging.warning(f"Arbeitnow search failed: {exc}")
-
-        # ── De-duplicate by URL, cap at limit ────────────────────────────
+        # ── De-duplicate by URL, cap at limit ─────────────────────────────
         seen: set = set()
         unique: List[Dict] = []
         for job in results:
@@ -173,21 +191,80 @@ class MCPClient:
         logging.info(f"Total unique jobs returned: {len(final)}")
         return final
 
-    def get_job_details(
-        self, job_id_on_source: str, source: str
-    ) -> Optional[Dict]:
-        """
-        Placeholder — details are already embedded in search results.
-        Override to make a live API call if needed.
-        """
-        logging.info(
-            f"get_job_details called for id={job_id_on_source} source={source}"
-        )
-        return None
+    # ──────────────────────────────────────────────────────────────────────────
+    # JobSpy
+    # ──────────────────────────────────────────────────────────────────────────
+    def _search_jobspy(
+        self,
+        keywords: str,
+        location: Optional[str],
+        limit: int,
+    ) -> List[Dict]:
+        is_remote = (location or "").lower().strip() in _REMOTE_KEYWORDS
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Adzuna
-    # ──────────────────────────────────────────────────────────────────────
+        df = scrape_jobs(
+            site_name        = self._sites,
+            search_term      = keywords,
+            location         = location if not is_remote else "Remote",
+            is_remote        = is_remote,
+            results_wanted   = min(limit, 20),   # per-site cap; total may be up to limit*sites
+            hours_old        = self._hours_old,
+            description_format = "markdown",
+            verbose          = 0,
+        )
+
+        if df is None or df.empty:
+            return []
+
+        jobs: List[Dict] = []
+        for _, row in df.iterrows():
+            # Build a stable unique ID
+            job_id = str(row.get("id") or "") or re.sub(r"[^a-z0-9]", "_", str(row.get("job_url", ""))[-60:])
+
+            # Resolve location
+            loc_obj  = row.get("location")
+            if hasattr(loc_obj, "display_location"):
+                loc_str = loc_obj.display_location()
+            elif loc_obj is not None:
+                loc_str = str(loc_obj)
+            else:
+                loc_str = "Remote" if row.get("is_remote") else (location or "Unknown")
+
+            # Resolve posted date
+            date_posted = row.get("date_posted")
+            if date_posted is not None:
+                try:
+                    posted_dt = datetime.combine(date_posted, datetime.min.time()).isoformat()
+                except Exception:
+                    posted_dt = datetime.now().isoformat()
+            else:
+                posted_dt = datetime.now().isoformat()
+
+            # Source label (jobspy 'site' column is a Site enum or string)
+            site_raw = row.get("site", "jobspy")
+            source   = site_raw.value.title() if hasattr(site_raw, "value") else str(site_raw).title()
+
+            desc = str(row.get("description") or "")
+
+            jobs.append({
+                "source":           source,
+                "job_id_on_source": f"{source.lower()}_{job_id}",
+                "title":            str(row.get("title") or "N/A"),
+                "company":          str(row.get("company_name") or "Unknown"),
+                "location":         loc_str,
+                "description":      desc[:5000],   # guard against huge descriptions
+                "job_url":          str(row.get("job_url") or ""),
+                "posted_date":      posted_dt,
+            })
+
+            if len(jobs) >= limit:
+                break
+
+        return jobs
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Adzuna (optional premium fallback)
+    # ──────────────────────────────────────────────────────────────────────────
     def _search_adzuna(
         self,
         keywords: str,
@@ -195,15 +272,15 @@ class MCPClient:
         limit: int,
     ) -> List[Dict]:
         country = _detect_adzuna_country(location)
-        url = f"https://api.adzuna.com/v1/api/jobs/{country}/search/1"
+        url     = f"https://api.adzuna.com/v1/api/jobs/{country}/search/1"
 
         params: Dict = {
-            "app_id":          self.adzuna_app_id,
-            "app_key":         self.adzuna_app_key,
+            "app_id":           self.adzuna_app_id,
+            "app_key":          self.adzuna_app_key,
             "results_per_page": min(limit, 20),
-            "what":            keywords,
-            "sort_by":         "date",
-            "content-type":    "application/json",
+            "what":             keywords,
+            "sort_by":          "date",
+            "content-type":     "application/json",
         }
         loc_stripped = (location or "").strip()
         if loc_stripped.lower() not in _REMOTE_KEYWORDS:
@@ -217,7 +294,6 @@ class MCPClient:
         for item in data.get("results", []):
             posted_raw = item.get("created", "")
             try:
-                # Adzuna returns ISO-8601: "2024-05-20T09:00:00Z"
                 posted_dt = datetime.fromisoformat(
                     posted_raw.replace("Z", "+00:00")
                 ).isoformat()
@@ -236,122 +312,9 @@ class MCPClient:
             })
         return jobs
 
-    # ──────────────────────────────────────────────────────────────────────
-    # RemoteOK
-    # ──────────────────────────────────────────────────────────────────────
-    def _search_remoteok(self, keywords: str, limit: int) -> List[Dict]:
-        resp = self._http.get(
-            "https://remoteok.com/api",
-            timeout=20,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        kw_tokens = [
-            t.lower().strip()
-            for t in re.split(r"[\s,]+", keywords)
-            if len(t) > 2
-        ]
-
-        jobs: List[Dict] = []
-        for item in data:
-            if not isinstance(item, dict) or "position" not in item:
-                continue
-
-            tags = " ".join(item.get("tags", []) or [])
-            searchable = (
-                f"{item.get('position', '')} "
-                f"{tags} "
-                f"{item.get('description', '')}"
-            ).lower()
-
-            # At least one keyword must match
-            if not any(kw in searchable for kw in kw_tokens):
-                continue
-
-            slug = item.get("slug", item.get("id", ""))
-            desc = _strip_html(item.get("description", ""))
-            if not desc and tags:
-                desc = f"Tags: {tags}"
-
-            posted_raw = item.get("date", "")
-            try:
-                posted_dt = datetime.fromisoformat(
-                    posted_raw.replace("Z", "+00:00")
-                ).isoformat()
-            except Exception:
-                posted_dt = datetime.now().isoformat()
-
-            jobs.append({
-                "source":           "RemoteOK",
-                "job_id_on_source": f"remoteok_{slug}",
-                "title":            item.get("position", "N/A"),
-                "company":          item.get("company", "Unknown"),
-                "location":         "Remote",
-                "description":      desc,
-                "job_url":          item.get("url", f"https://remoteok.com/l/{slug}"),
-                "posted_date":      posted_dt,
-            })
-
-            if len(jobs) >= limit:
-                break
-
-        return jobs
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Arbeitnow
-    # ──────────────────────────────────────────────────────────────────────
-    def _search_arbeitnow(
-        self,
-        keywords: str,
-        location: Optional[str],
-        limit: int,
-    ) -> List[Dict]:
-        params: Dict = {"search": keywords, "page": 1}
-        loc_stripped = (location or "").strip()
-        if loc_stripped.lower() not in _REMOTE_KEYWORDS:
-            params["location"] = loc_stripped
-
-        resp = self._http.get(
-            "https://www.arbeitnow.com/api/job-board-api",
-            params=params,
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        jobs: List[Dict] = []
-        for item in data.get("data", []):
-            slug = item.get("slug", "")
-            is_remote_flag = item.get("remote", False)
-            raw_loc = item.get("location", "")
-            display_loc = "Remote" if is_remote_flag else (raw_loc or "Unknown")
-
-            created_ts = item.get("created_at")
-            try:
-                posted_dt = datetime.fromtimestamp(float(created_ts)).isoformat()
-            except Exception:
-                posted_dt = datetime.now().isoformat()
-
-            jobs.append({
-                "source":           "Arbeitnow",
-                "job_id_on_source": f"arbeitnow_{slug}",
-                "title":            item.get("title", "N/A"),
-                "company":          item.get("company_name", "Unknown"),
-                "location":         display_loc,
-                "description":      _strip_html(item.get("description", "")),
-                "job_url":          item.get("url", ""),
-                "posted_date":      posted_dt,
-            })
-
-            if len(jobs) >= limit:
-                break
-
-        return jobs
-
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Quick smoke-test (run as: python src/mcp_client.py)
+# Smoke-test  (run as: python src/mcp_client.py  [keywords]  [location])
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import sys
@@ -364,10 +327,14 @@ if __name__ == "__main__":
     jobs   = client.search_jobs(keywords=kw, location=loc, limit=5)
 
     if not jobs:
-        print("No jobs found. Check your API keys and network connection.")
+        print(
+            "\nNo jobs found.\n"
+            "Make sure python-jobspy is installed:  pip install python-jobspy\n"
+            "Or add ADZUNA_APP_ID / ADZUNA_APP_KEY to your .env for the Adzuna fallback."
+        )
     else:
         print(f"\nFound {len(jobs)} job(s) for '{kw}' in '{loc}':\n")
         for i, j in enumerate(jobs, 1):
-            print(f"  [{i}] {j['title']} @ {j['company']} ({j['source']})")
+            print(f"  [{i}] {j['title']} @ {j['company']}  ({j['source']})")
             print(f"       {j['location']}  |  {j['job_url'][:70]}")
             print()

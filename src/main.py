@@ -19,6 +19,7 @@ from PyQt6.QtGui import QFont, QColor, QPalette, QIcon
 # Add parent dir to path so src.* imports work when run directly
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+
 from src.database import init_db, Session, UserProfile, Resume, JobPosting, TailoredResume, Application
 from src.mcp_client import MCPClient
 from src.ats_tailor import ATSTailor
