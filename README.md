@@ -9,11 +9,15 @@ An AI-powered desktop application that automates the entire job application work
 | Feature | Description |
 |---|---|
 | **Multi-Profile Management** | Manage multiple applicant profiles and resumes |
-| **Job Search (MCP)** | Search jobs across Indeed, Glassdoor, Naukri, LinkedIn & more |
+| **Real Job Search (3 sources)** | Adzuna · RemoteOK · Arbeitnow — live data, no scraping |
 | **AI Resume Tailoring** | GPT-powered ATS keyword optimization with match scores |
+| **AI Cover Letter** | GPT-generated tailored cover letter for any job |
+| **AI Cold Email** | Recruiter outreach message auto-generated from resume + JD |
+| **AI Interview Prep** | Custom Q&A guide based on your profile and the job |
 | **Browser Automation** | Playwright-based auto form-fill and submission |
 | **Application Tracker** | SQLite-backed dashboard tracking every application |
-| **Dark Mode GUI** | Modern PyQt6 UI with dark theme |
+| **Dark Mode Web UI** | Modern React + FastAPI Obsidian-themed interface |
+| **SSE Live Log Stream** | Real-time console log feed in the browser |
 
 ---
 
@@ -75,10 +79,44 @@ python src/database.py
 
 ---
 
+## 🌐 Job API Sources
+
+The app aggregates **real job listings** from three sources:
+
+| Source | Auth | Coverage | Notes |
+|---|---|---|---|
+| **Adzuna** | Free key required | US, UK, India, AU, DE, FR + more | 250 calls/day free |
+| **RemoteOK** | None | Remote-only worldwide | Always active |
+| **Arbeitnow** | None | EU + Remote | Always active |
+
+### Setting up Adzuna (Optional but recommended for location search)
+1. Register free at **https://developer.adzuna.com/**
+2. Copy your `App ID` and `App Key`
+3. Add them to `.env`:
+   ```
+   ADZUNA_APP_ID="your_app_id_here"
+   ADZUNA_APP_KEY="your_app_key_here"
+   ```
+
+> **No API key?** The app still returns real jobs from RemoteOK and Arbeitnow without any setup.
+
+---
+
 ## 🚀 Running the App
 
 ```powershell
+# Start the full web stack (FastAPI backend + React frontend)
+python run_web.py
+
+# Or run the PyQt6 desktop GUI directly
 python src/main.py
+```
+
+### Test job search from CLI
+```powershell
+# Smoke-test the job client (no server needed)
+python src/mcp_client.py "Python Developer" "Remote"
+python src/mcp_client.py "Data Scientist" "London"
 ```
 
 ---

@@ -337,13 +337,13 @@ class JobAutomatorApp(QMainWindow):
         if not profile or not item:
             return None
         resume_id = item.data(Qt.ItemDataRole.UserRole)
-        return self.session.query(Resume).get(resume_id)
+        return self.session.get(Resume, resume_id)
 
     def _current_job(self) -> Optional[JobPosting]:
         item = self.job_list.currentItem()
         if not item:
             return None
-        return self.session.query(JobPosting).get(item.data(Qt.ItemDataRole.UserRole))
+        return self.session.get(JobPosting, item.data(Qt.ItemDataRole.UserRole))
 
     def _update_stats(self):
         self.stat_profiles.setText(f"👤  Profiles: {self.session.query(UserProfile).count()}")
@@ -561,9 +561,9 @@ class JobAutomatorApp(QMainWindow):
 
     async def _perform_application(self, profile_id: int, resume_id: int, job_id: int) -> bool:
         # Re-fetch inside worker thread session
-        profile = self.session.query(UserProfile).get(profile_id)
-        resume  = self.session.query(Resume).get(resume_id)
-        job     = self.session.query(JobPosting).get(job_id)
+        profile = self.session.get(UserProfile, profile_id)
+        resume  = self.session.get(Resume, resume_id)
+        job     = self.session.get(JobPosting, job_id)
 
         # Read resume file
         try:

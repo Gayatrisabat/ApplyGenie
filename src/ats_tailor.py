@@ -102,8 +102,94 @@ class ATSTailor:
             logging.error(f"Error tailoring resume: {e}")
             return base_resume_content, 0
 
+    def generate_cover_letter(self, resume_content: str, job_description: str) -> str:
+        """Generates a professional, highly tailored cover letter."""
+        if not self.client:
+            return "OpenAI API key not configured. Cover letter generation is unavailable."
+
+        prompt = (
+            "You are an expert career coach. Write a compelling, highly tailored, professional "
+            "cover letter (max 350 words) based on the candidate's resume and the target job description. "
+            "Address the hiring manager, highlight relevant achievements from the resume naturally, "
+            "and express enthusiasm for the specific role. Do NOT fabricate experience.\n\n"
+            f"Candidate Resume:\n```\n{resume_content}\n```\n\n"
+            f"Job Description:\n```\n{job_description}\n```\n\n"
+            "Tailored Cover Letter:"
+        )
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You write premium, impactful cover letters."},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=800,
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logging.error(f"Error generating cover letter: {e}")
+            return f"Failed to generate cover letter: {e}"
+
+    def generate_cold_email(self, resume_content: str, job_description: str) -> str:
+        """Generates a professional LinkedIn/email outreach message to recruiters."""
+        if not self.client:
+            return "OpenAI API key not configured. Outreach generation is unavailable."
+
+        prompt = (
+            "You are an expert copywriter. Write a highly personalized, short, and punchy outreach "
+            "message (max 150 words) to a recruiter or hiring manager. Reference key matching skills "
+            "from the resume and explain how they connect to the job description. Keep it concise, "
+            "engaging, and professional, concluding with a clear call-to-action.\n\n"
+            f"Candidate Resume:\n```\n{resume_content}\n```\n\n"
+            f"Job Description:\n```\n{job_description}\n```\n\n"
+            "Personalized Outreach Message:"
+        )
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You write engaging, high-conversion cold outreach messages."},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=400,
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logging.error(f"Error generating outreach message: {e}")
+            return f"Failed to generate outreach message: {e}"
+
+    def generate_interview_prep(self, resume_content: str, job_description: str) -> str:
+        """Generates a customized interview preparation guide."""
+        if not self.client:
+            return "OpenAI API key not configured. Interview preparation is unavailable."
+
+        prompt = (
+            "You are an expert technical interviewer. Based on the candidate's resume and the "
+            "target job description, generate an interview preparation guide containing:\n"
+            "1. Top 3 technical questions they are likely to be asked with short, strategic answer guidelines.\n"
+            "2. Top 2 behavioral questions tailored to their achievements and the job requirements.\n"
+            "Format the output beautifully with clear markdown headings.\n\n"
+            f"Candidate Resume:\n```\n{resume_content}\n```\n\n"
+            f"Job Description:\n```\n{job_description}\n```\n\n"
+            "Interview Prep Guide:"
+        )
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You create tailored interview preparation guides."},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=1000,
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logging.error(f"Error generating interview prep guide: {e}")
+            return f"Failed to generate interview prep guide: {e}"
+
 
 if __name__ == '__main__':
+
     tailor = ATSTailor()
     sample_jd = """
     We are seeking a Python Developer with experience in Django, Flask, PostgreSQL,
