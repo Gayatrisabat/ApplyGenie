@@ -106,6 +106,30 @@ class AIGenerationSchema(BaseModel):
 
 
 # ──────────────────────────────────────────────
+# Resume File Parser
+# ──────────────────────────────────────────────
+def _read_resume_file(file_path: str, fallback_name: str = "Applicant") -> str:
+    """Reads resume content from PDF, DOCX, or TXT. Falls back gracefully."""
+    ext = os.path.splitext(file_path)[1].lower()
+    try:
+        if ext == '.pdf':
+            import pdfplumber
+            with pdfplumber.open(file_path) as pdf:
+                text = '\n'.join(page.extract_text() or '' for page in pdf.pages)
+                return text.strip() or f"{fallback_name}\nSkills: Software Development"
+        elif ext in ('.docx', '.doc'):
+            from docx import Document as DocxDocument
+            doc = DocxDocument(file_path)
+            text = '\n'.join(para.text for para in doc.paragraphs if para.text.strip())
+            return text.strip() or f"{fallback_name}\nSkills: Software Development"
+        else:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                return f.read()
+    except Exception as e:
+        logging.warning(f"Could not parse resume {file_path}: {e}")
+        return f"{fallback_name}\nSkills: Software Development"
+
+# ──────────────────────────────────────────────
 # REST Endpoints
 # ──────────────────────────────────────────────
 
@@ -320,11 +344,7 @@ async def perform_application_task(profile_id: int, resume_id: int, job_id: int)
             return
 
         # Read resume file
-        try:
-            with open(resume.file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                resume_content = f.read()
-        except Exception:
-            resume_content = f"{profile.name}\nSoftware Developer\nSkills: Python, SQL"
+        resume_content = _read_resume_file(resume.file_path, profile.name)
 
         # Tailor
         logging.info("ATS Engine: Analyzing job description...")
@@ -396,6 +416,23 @@ async def perform_application_task(profile_id: int, resume_id: int, job_id: int)
 
 @app.post("/api/jobs/apply")
 def apply_to_job(payload: ApplySchema, background_tasks: BackgroundTasks):
+    # Duplicate application guard
+    session = Session()
+    try:
+        existing = session.query(Application).filter_by(
+            user_profile_id=payload.profile_id,
+            job_posting_id=payload.job_id
+        ).first()
+        if existing:
+            logging.warning(f"Duplicate application blocked for job_id={payload.job_id}")
+            return {
+                "status": "duplicate",
+                "message": f"You have already applied to this job (Status: {existing.status})",
+                "existing_status": existing.status
+            }
+    finally:
+        session.close()
+
     background_tasks.add_task(
         perform_application_task,
         payload.profile_id,
@@ -403,7 +440,7 @@ def apply_to_job(payload: ApplySchema, background_tasks: BackgroundTasks):
         payload.job_id
     )
     logging.info(f"Scheduled application for job_id={payload.job_id} in background.")
-    return {"status": "processing", "message": "Application started in background"}
+    return {"status": "processing", "message": "Application started in background. Watch the Logs tab for live updates."}
 
 # Application History API
 @app.get("/api/applications")
@@ -419,10 +456,100 @@ def get_applications():
                 "source": app.job_posting.source if app.job_posting else "—",
                 "status": app.status,
                 "match_score": app.tailored_resume.match_score if app.tailored_resume else 0,
+                "tailored_resume_id": app.tailored_resume_id,
                 "applied_at": app.applied_at.strftime("%Y-%m-%d %H:%M") if app.applied_at else "—"
             }
             for app in apps
         ]
+    finally:
+        session.close()
+
+@app.get("/api/applications/{app_id}")
+def get_application_status(app_id: int):
+    """Get status of a single application (for polling after apply)."""
+    session = Session()
+    try:
+        application = session.get(Application, app_id)
+        if not application:
+            raise HTTPException(status_code=404, detail="Application not found.")
+        return {
+            "id": application.id,
+            "status": application.status,
+            "match_score": application.tailored_resume.match_score if application.tailored_resume else 0,
+            "applied_at": application.applied_at.strftime("%Y-%m-%d %H:%M") if application.applied_at else "—",
+            "notes": application.notes or ""
+        }
+    finally:
+        session.close()
+
+@app.put("/api/profiles/{profile_id}")
+def update_profile(profile_id: int, profile: UserProfileSchema):
+    """Update an existing user profile."""
+    session = Session()
+    try:
+        p = session.get(UserProfile, profile_id)
+        if not p:
+            raise HTTPException(status_code=404, detail="Profile not found.")
+        # Check if email is being changed to one already in use
+        if profile.email != p.email:
+            conflict = session.query(UserProfile).filter_by(email=profile.email).first()
+            if conflict:
+                raise HTTPException(status_code=400, detail="Email already in use by another profile.")
+        p.name = profile.name
+        p.email = profile.email
+        p.phone = profile.phone
+        p.linkedin_profile = profile.linkedin_profile
+        p.github_profile = profile.github_profile
+        session.commit()
+        logging.info(f"Profile updated via API: {p.name}")
+        return {"status": "success", "profile_id": p.id}
+    finally:
+        session.close()
+
+@app.get("/api/tailored-resumes/{resume_id}/download")
+def download_tailored_resume(resume_id: int):
+    """Download a tailored resume file."""
+    session = Session()
+    try:
+        tr = session.get(TailoredResume, resume_id)
+        if not tr:
+            raise HTTPException(status_code=404, detail="Tailored resume not found.")
+        if not os.path.exists(tr.tailored_file_path):
+            raise HTTPException(status_code=404, detail="Tailored resume file missing from disk.")
+        filename = f"tailored_resume_{resume_id}.txt"
+        return FileResponse(
+            tr.tailored_file_path,
+            media_type="text/plain",
+            filename=filename
+        )
+    finally:
+        session.close()
+
+@app.get("/api/resumes/{resume_id}/preview")
+def preview_resume(resume_id: int):
+    """Preview the text content of an uploaded resume."""
+    session = Session()
+    try:
+        r = session.get(Resume, resume_id)
+        if not r:
+            raise HTTPException(status_code=404, detail="Resume not found.")
+        content = _read_resume_file(r.file_path, r.title)
+        return {"content": content, "title": r.title}
+    finally:
+        session.close()
+
+@app.delete("/api/applications/{app_id}")
+def delete_application(app_id: int):
+    """Delete an application record."""
+    session = Session()
+    try:
+        application = session.get(Application, app_id)
+        if not application:
+            raise HTTPException(status_code=404, detail="Application not found.")
+        session.delete(application)
+        session.commit()
+        logging.info(f"Application {app_id} deleted.")
+        return {"status": "success"}
     finally:
         session.close()
 
@@ -441,11 +568,7 @@ def generate_cover_letter_endpoint(payload: AIGenerationSchema):
         if not profile or not resume or not job:
             raise HTTPException(status_code=400, detail="Invalid profile, resume, or job ID")
             
-        try:
-            with open(resume.file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                resume_content = f.read()
-        except Exception:
-            resume_content = f"{profile.name}\nSkills: Software Development"
+        resume_content = _read_resume_file(resume.file_path, profile.name)
             
         logging.info(f"AI: Generating tailored cover letter for {profile.name}...")
         result = ats_tailor.generate_cover_letter(resume_content, job.description)
@@ -464,11 +587,7 @@ def generate_cold_email_endpoint(payload: AIGenerationSchema):
         if not profile or not resume or not job:
             raise HTTPException(status_code=400, detail="Invalid profile, resume, or job ID")
             
-        try:
-            with open(resume.file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                resume_content = f.read()
-        except Exception:
-            resume_content = f"{profile.name}\nSkills: Software Development"
+        resume_content = _read_resume_file(resume.file_path, profile.name)
             
         logging.info(f"AI: Generating recruiter cold outreach message for {profile.name}...")
         result = ats_tailor.generate_cold_email(resume_content, job.description)
@@ -487,11 +606,7 @@ def generate_interview_prep_endpoint(payload: AIGenerationSchema):
         if not profile or not resume or not job:
             raise HTTPException(status_code=400, detail="Invalid profile, resume, or job ID")
             
-        try:
-            with open(resume.file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                resume_content = f.read()
-        except Exception:
-            resume_content = f"{profile.name}\nSkills: Software Development"
+        resume_content = _read_resume_file(resume.file_path, profile.name)
             
         logging.info(f"AI: Generating tailored interview preparation guide for {profile.name}...")
         result = ats_tailor.generate_interview_prep(resume_content, job.description)

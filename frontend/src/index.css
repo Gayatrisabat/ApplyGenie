@@ -858,3 +858,170 @@ body {
   font-size: 13px;
   color: var(--text-muted);
 }
+
+/* ── Toast Notification Stack ─────────────────────────────────────────────── */
+.toast-stack {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 9999;
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 260px;
+  max-width: 380px;
+  cursor: pointer;
+  pointer-events: all;
+  animation: toast-in 0.3s var(--ease-fast);
+  backdrop-filter: blur(8px);
+  border: 1px solid transparent;
+  box-shadow: var(--shadow-md);
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(40px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.toast-icon { font-size: 16px; flex-shrink: 0; }
+.toast-msg  { flex-grow: 1; line-height: 1.4; }
+
+.toast-success {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: rgba(16, 185, 129, 0.3);
+  color: #6ee7b7;
+}
+.toast-error {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+}
+.toast-warn {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #fcd34d;
+}
+.toast-info {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.3);
+  color: #a5b4fc;
+}
+
+/* ── Pagination ───────────────────────────────────────────────────────────── */
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ── New Source Badges ────────────────────────────────────────────────────── */
+.source-remoteok  { background: rgba(0, 211, 149, 0.15); color: #00d395; border-color: rgba(0, 211, 149, 0.3); }
+.source-arbeitnow { background: rgba(251, 146, 60, 0.15); color: #fb923c; border-color: rgba(251, 146, 60, 0.3); }
+.source-adzuna    { background: rgba(168, 85, 247, 0.15); color: #c084fc; border-color: rgba(168, 85, 247, 0.3); }
+
+/* ── Form Row (two-column form layout) ───────────────────────────────────── */
+.form-row {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+}
+.form-row .form-group { margin-top: 0; }
+
+/* ── Danger Button ────────────────────────────────────────────────────────── */
+.btn-danger {
+  background: var(--danger-subtle);
+  color: var(--danger);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+.btn-danger:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+/* ── Sidebar badge (applications count) ──────────────────────────────────── */
+.menu-badge {
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 10px;
+  margin-left: auto;
+  min-width: 20px;
+  text-align: center;
+}
+
+/* ── Table Panel (Applications tab) ──────────────────────────────────────── */
+.table-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 24px;
+  height: calc(100vh - 190px);
+  display: flex;
+  flex-direction: column;
+}
+
+.table-container {
+  flex-grow: 1;
+  overflow-y: auto;
+}
+
+.modern-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.modern-table th {
+  text-align: left;
+  padding: 10px 14px;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.modern-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(36, 36, 46, 0.6);
+  color: var(--text-main);
+  vertical-align: middle;
+}
+
+.modern-table tr:hover td {
+  background: var(--bg-card-hover);
+}
+
+/* ── Application status badges ────────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+.badge-applied    { background: var(--success-subtle);  color: var(--success);  border-color: rgba(16,185,129,0.3); }
+.badge-failed     { background: var(--danger-subtle);   color: var(--danger);   border-color: rgba(239,68,68,0.3); }
+.badge-captcha    { background: var(--warning-subtle);  color: var(--warning);  border-color: rgba(245,158,11,0.3); }
+.badge-processing { background: var(--accent-subtle);   color: var(--accent);   border-color: rgba(99,102,241,0.3); }
+
