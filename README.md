@@ -1,4 +1,4 @@
-# 🤖 Automated Job Application Software
+# Automated Job Application Software
 
 An AI-powered desktop application that automates the entire job application workflow — from searching job portals, tailoring your resume with GPT, to auto-filling and submitting applications via browser automation.
 
